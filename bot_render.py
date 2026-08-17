@@ -15,15 +15,14 @@ app = Flask(__name__)
 
 USERS_FILE = "users.json"
 DOWNLOAD_DIR = "downloads"
-MAX_SIZE = 50 * 1024 * 1024  # 50 MB - حد تليجرام
+MAX_SIZE = 50 * 1024 * 1024
 
-# تخزين مؤقت للروابط (عشان أزرار الـ callback مش بتستحمل روابط طويلة)
 pending_urls = {}
 
 WELCOME_MSG = """لتحميل فديو وصور من انستا فقط ارسل رابط المنشور او يوزر الحساب📲 .
 
 - لتحميل فديو من تيك توك فقط ارسل رابط المنشور👁🗨 .
-- لتحميل من يوتيوب فقط ارسل اسم الاغنيه او الرابط🎙 .بوت تيك توك
+- لتحميل من يوتيوب فقط ارسل اسم الاغنيه او الرابط🎙 .
 
 🤖 عجبك البوت؟ ابعتلي و اعملك واحد.
 @N9s_y"""
@@ -31,13 +30,13 @@ WELCOME_MSG = """لتحميل فديو وصور من انستا فقط ارسل 
 MAINTENANCE_MODE = False
 
 
-# ============================================
-# إدارة بيانات المستخدمين
-# ============================================
 def load_users():
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(USERS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
     return {}
 
 
@@ -78,20 +77,13 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 
-# ============================================
-# دوال مساعدة للتحميل والضغط
-# ============================================
 def compress_video(input_path):
-    """يضغط الفيديو لو أكبر من الحد المسموح، بيرجع مسار الملف المضغوط أو None لو فشل"""
-    output_path = input_path.replace(".mp4", "_compressed.mp4")
+    output_path = input_path.rsplit(".", 1)[0] + "_compressed.mp4"
     try:
         subprocess.run(
-            [
-                "ffmpeg", "-i", input_path, "-vcodec", "libx264",
-                "-crf", "32", "-preset", "fast", "-acodec", "aac",
-                "-b:a", "96k", "-y", output_path
-            ],
-            check=True, capture_output=True, timeout=600
+            ["ffmpeg", "-i", input_path, "-vcodec", "libx264", "-crf", "32",
+             "-preset", "fast", "-acodec", "aac", "-b:a", "96k", "-y", output_path],
+            check=True, capture_output=True, timeout=900
         )
         if os.path.exists(output_path) and os.path.getsize(output_path) < MAX_SIZE:
             return output_path
@@ -100,56 +92,48 @@ def compress_video(input_path):
         return None
 
 
-def get_platform(url):
-    url = url.lower()
-    if "tiktok.com" in url:
-        return "tiktok"
-    if "instagram.com" in url:
-        return "instagram"
-    if "youtube.com" in url or "youtu.be" in url:
-        return "youtube"
-    return "other"
-
-
 def download_media(url, mode="video"):
-    """
-    mode: video / audio / hd
-    يرجع قائمة بمسارات الملفات اللي اتحملت (ممكن أكتر من واحد لو كاروسيل انستجرام)
-    """
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     uid = uuid.uuid4().hex[:8]
-    outtmpl = f"{DOWNLOAD_DIR}/{uid}_%(autonumber)s.%(ext)s"
+    outtmpl = f"{DOWNLOAD_DIR}/{uid}_%(playlist_index)s.%(ext)s"
+
+    common_opts = {
+        'outtmpl': outtmpl,
+        'quiet': True,
+        'no_warnings': True,
+        'ignoreerrors': True,
+        'noplaylist': False,
+    }
 
     if mode == "audio":
-        ydl_opts = {
-            'outtmpl': outtmpl,
+        ydl_opts = dict(common_opts, **{
             'format': 'bestaudio/best',
             'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-            'quiet': True,
-        }
-    elif mode == "hd":
-        ydl_opts = {
-            'outtmpl': outtmpl,
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'merge_output_format': 'mp4',
-            'quiet': True,
-        }
+        })
     else:
-        ydl_opts = {
-            'outtmpl': outtmpl,
-            'format': 'best[ext=mp4]/best',
-            'quiet': True,
-        }
+        ydl_opts = dict(common_opts, **{
+            'format': 'bestvideo*+bestaudio/best',
+            'merge_output_format': 'mp4',
+        })
 
     files = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        if info is None:
+            return []
         entries = info.get('entries') if info.get('_type') == 'playlist' else [info]
         for entry in entries:
+            if entry is None:
+                continue
             fn = ydl.prepare_filename(entry)
             if mode == "audio":
                 base, _ = os.path.splitext(fn)
                 fn = base + ".mp3"
+            elif not os.path.exists(fn):
+                base, _ = os.path.splitext(fn)
+                alt = base + ".mp4"
+                if os.path.exists(alt):
+                    fn = alt
             if os.path.exists(fn):
                 files.append(fn)
     return files
@@ -164,9 +148,6 @@ def cleanup_files(files):
             pass
 
 
-# ============================================
-# أوامر المستخدم العادي
-# ============================================
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     register_user(message)
@@ -182,12 +163,11 @@ def handle_link(message):
 
     text = message.text.strip()
 
-    # أوامر الأدمن
     if is_admin(message.from_user.id):
         if text.startswith("/stats"):
             users = load_users()
             total_downloads = sum(u.get("downloads", 0) for u in users.values())
-            bot.reply_to(message, f"📊 إحصائيات البوت:\nعدد المستخدمين: {len(users)}\nإجمالي التحميلات: {total_downloads}\nحالة الصيانة: {'مفعّلة' if MAINTENANCE_MODE else 'متوقفة'}")
+            bot.reply_to(message, f"📊 عدد المستخدمين: {len(users)}\nإجمالي التحميلات: {total_downloads}")
             return
         if text.startswith("/broadcast "):
             msg_text = text.replace("/broadcast ", "", 1)
@@ -199,30 +179,20 @@ def handle_link(message):
                     sent += 1
                 except Exception:
                     failed += 1
-            bot.reply_to(message, f"تم الإرسال لـ {sent} مستخدم، وفشل مع {failed}.")
+            bot.reply_to(message, f"تم الإرسال لـ {sent}، فشل {failed}.")
             return
         if text.startswith("/maintenance_on"):
             MAINTENANCE_MODE = True
-            bot.reply_to(message, "🔧 تم تفعيل وضع الصيانة.")
+            bot.reply_to(message, "🔧 تم تفعيل الصيانة.")
             return
         if text.startswith("/maintenance_off"):
             MAINTENANCE_MODE = False
-            bot.reply_to(message, "✅ تم إلغاء وضع الصيانة.")
+            bot.reply_to(message, "✅ تم إلغاء الصيانة.")
             return
         if text.startswith("/users"):
             users = load_users()
-            lines = [f"{u.get('name','')} (@{u.get('username','')}) - تحميلات: {u.get('downloads',0)}" for u in users.values()]
-            reply_text = "👥 قائمة المستخدمين:\n\n" + "\n".join(lines[:50]) if lines else "لا يوجد مستخدمين بعد."
-            bot.reply_to(message, reply_text[:4000])
-            return
-        if text.startswith("/admin_help"):
-            bot.reply_to(message, """🛠 أوامر الأدمن المتاحة:
-/stats - إحصائيات البوت
-/users - قائمة المستخدمين
-/broadcast <رسالة> - إرسال رسالة لكل المستخدمين
-/maintenance_on - تفعيل وضع الصيانة
-/maintenance_off - إلغاء وضع الصيانة
-/admin_help - عرض هذه القائمة""")
+            lines = [f"{u.get('name','')} (@{u.get('username','')}) - {u.get('downloads',0)}" for u in users.values()]
+            bot.reply_to(message, ("👥 المستخدمين:\n\n" + "\n".join(lines[:50]))[:4000] if lines else "لا يوجد مستخدمين.")
             return
 
     register_user(message)
@@ -240,63 +210,64 @@ def process_download(message, url, mode):
     try:
         files = download_media(url, mode=mode)
         if not files:
-            bot.edit_message_text("مقدرتش ألاقي محتوى في اللينك ده.", message.chat.id, status_msg.message_id)
+            bot.edit_message_text("مقدرتش ألاقي محتوى في اللينك ده. جرب لينك تاني.", message.chat.id, status_msg.message_id)
             return
 
+        sent_any = False
         for f in files:
             size = os.path.getsize(f)
-            if size > MAX_SIZE:
-                if f.endswith(".mp4"):
-                    compressed = compress_video(f)
-                    if compressed:
-                        os.remove(f)
-                        f = compressed
-                    else:
-                        bot.send_message(message.chat.id, "⚠️ الفيديو كبير جدًا ومقدرناش نضغطه لحجم مناسب.")
-                        continue
+            if size > MAX_SIZE and f.lower().endswith(".mp4"):
+                compressed = compress_video(f)
+                if compressed:
+                    os.remove(f)
+                    f = compressed
                 else:
-                    bot.send_message(message.chat.id, "⚠️ الملف كبير جدًا عن حد تليجرام (50 ميجا).")
+                    bot.send_message(message.chat.id, "⚠️ الملف كبير جدًا (أكبر من 50 ميجا) ومقدرناش نضغطه.")
                     continue
+            elif size > MAX_SIZE:
+                bot.send_message(message.chat.id, "⚠️ الملف كبير جدًا عن حد تليجرام (50 ميجا).")
+                continue
 
             with open(f, 'rb') as media:
-                if f.endswith(".mp3"):
+                lower = f.lower()
+                if lower.endswith(".mp3"):
                     bot.send_audio(message.chat.id, media)
-                elif f.endswith((".jpg", ".jpeg", ".png", ".webp")):
+                elif lower.endswith((".jpg", ".jpeg", ".png", ".webp")):
                     bot.send_photo(message.chat.id, media)
                 else:
                     sent = bot.send_video(message.chat.id, media, caption="اتفضل الفيديو")
-                    # أزرار الخيارات الإضافية بعد الفيديو (بس لو فيديو وليس صوت)
                     if mode == "video":
-                        platform = get_platform(url)
                         short_id = uuid.uuid4().hex[:10]
                         pending_urls[short_id] = url
                         markup = types.InlineKeyboardMarkup()
                         markup.row(
-                            types.InlineKeyboardButton("🎵 نسخة صوتية", callback_data=f"audio:{short_id}"),
-                            types.InlineKeyboardButton("🎬 جودة HD", callback_data=f"hd:{short_id}")
+                            types.InlineKeyboardButton("🎵 نسخة صوتية", callback_data=f"audio:{short_id}")
                         )
-                        bot.send_message(sent.chat.id, "عايز نسخة تانية من نفس الفيديو؟", reply_markup=markup)
+                        bot.send_message(sent.chat.id, "عايز نسخة صوتية من نفس الفيديو؟", reply_markup=markup)
+            sent_any = True
 
         bot.delete_message(message.chat.id, status_msg.message_id)
-        increment_downloads(message.from_user.id)
-    except yt_dlp.utils.DownloadError:
-        bot.edit_message_text("مقدرتش أحمل من اللينك ده. اتأكد إن اللينك صحيح.", message.chat.id, status_msg.message_id)
+        if sent_any:
+            increment_downloads(message.from_user.id)
     except Exception as e:
-        bot.edit_message_text(f"حصل خطأ: {e}", message.chat.id, status_msg.message_id)
+        try:
+            bot.edit_message_text(f"حصل خطأ: {e}", message.chat.id, status_msg.message_id)
+        except Exception:
+            bot.send_message(message.chat.id, f"حصل خطأ: {e}")
     finally:
         cleanup_files(files)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith(("audio:", "hd:")))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("audio:"))
 def handle_callback(call):
-    action, short_id = call.data.split(":", 1)
+    _, short_id = call.data.split(":", 1)
     url = pending_urls.get(short_id)
     if not url:
         bot.answer_callback_query(call.id, "انتهت صلاحية الرابط، ابعت الرابط تاني.")
         return
     bot.answer_callback_query(call.id, "جاري التحميل...")
-    mode = "audio" if action == "audio" else "hd"
-    process_download(call.message, url, mode=mode)
+    process_download(call.message, url, mode="audio")
+
 
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
