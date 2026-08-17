@@ -59,7 +59,7 @@ def register_user(message):
         try:
             bot.send_message(
                 ADMIN_ID,
-                f"👤 مستخدم جديد بدأ البوت:\nالاسم: {message.from_user.first_name}\nاليوزر: @{message.from_user.username}\nID: {message.from_user.id}"
+                f"مستخدم جديد بدأ البوت:\nالاسم: {message.from_user.first_name}\nاليوزر: @{message.from_user.username}\nID: {message.from_user.id}"
             )
         except Exception:
             pass
@@ -158,7 +158,7 @@ def send_welcome(message):
 def handle_link(message):
     global MAINTENANCE_MODE
     if MAINTENANCE_MODE and not is_admin(message.from_user.id):
-        bot.reply_to(message, "🔧 البوت تحت الصيانة حاليًا، حاول تاني بعد شوية.")
+        bot.reply_to(message, "البوت تحت الصيانة حاليًا، حاول تاني بعد شوية.")
         return
 
     text = message.text.strip()
@@ -167,7 +167,7 @@ def handle_link(message):
         if text.startswith("/stats"):
             users = load_users()
             total_downloads = sum(u.get("downloads", 0) for u in users.values())
-            bot.reply_to(message, f"📊 عدد المستخدمين: {len(users)}\nإجمالي التحميلات: {total_downloads}")
+            bot.reply_to(message, f"عدد المستخدمين: {len(users)}\nإجمالي التحميلات: {total_downloads}")
             return
         if text.startswith("/broadcast "):
             msg_text = text.replace("/broadcast ", "", 1)
@@ -175,7 +175,7 @@ def handle_link(message):
             sent, failed = 0, 0
             for uid in users:
                 try:
-                    bot.send_message(int(uid), f"📢 رسالة من الإدارة:\n\n{msg_text}")
+                    bot.send_message(int(uid), f"رسالة من الإدارة:\n\n{msg_text}")
                     sent += 1
                 except Exception:
                     failed += 1
@@ -183,16 +183,16 @@ def handle_link(message):
             return
         if text.startswith("/maintenance_on"):
             MAINTENANCE_MODE = True
-            bot.reply_to(message, "🔧 تم تفعيل الصيانة.")
+            bot.reply_to(message, "تم تفعيل الصيانة.")
             return
         if text.startswith("/maintenance_off"):
             MAINTENANCE_MODE = False
-            bot.reply_to(message, "✅ تم إلغاء الصيانة.")
+            bot.reply_to(message, "تم إلغاء الصيانة.")
             return
         if text.startswith("/users"):
             users = load_users()
             lines = [f"{u.get('name','')} (@{u.get('username','')}) - {u.get('downloads',0)}" for u in users.values()]
-            bot.reply_to(message, ("👥 المستخدمين:\n\n" + "\n".join(lines[:50]))[:4000] if lines else "لا يوجد مستخدمين.")
+            bot.reply_to(message, ("المستخدمين:\n\n" + "\n".join(lines[:50]))[:4000] if lines else "لا يوجد مستخدمين.")
             return
 
     register_user(message)
@@ -205,7 +205,7 @@ def handle_link(message):
 
 
 def process_download(message, url, mode):
-    status_msg = bot.reply_to(message, "⏳ بحمل، استنى شوية...")
+    status_msg = bot.reply_to(message, "بحمل، استنى شوية...")
     files = []
     try:
         files = download_media(url, mode=mode)
@@ -222,10 +222,10 @@ def process_download(message, url, mode):
                     os.remove(f)
                     f = compressed
                 else:
-                    bot.send_message(message.chat.id, "⚠️ الملف كبير جدًا (أكبر من 50 ميجا) ومقدرناش نضغطه.")
+                    bot.send_message(message.chat.id, "الملف كبير جدًا ومقدرناش نضغطه.")
                     continue
             elif size > MAX_SIZE:
-                bot.send_message(message.chat.id, "⚠️ الملف كبير جدًا عن حد تليجرام (50 ميجا).")
+                bot.send_message(message.chat.id, "الملف كبير جدًا عن حد تليجرام (50 ميجا).")
                 continue
 
             with open(f, 'rb') as media:
@@ -241,7 +241,7 @@ def process_download(message, url, mode):
                         pending_urls[short_id] = url
                         markup = types.InlineKeyboardMarkup()
                         markup.row(
-                            types.InlineKeyboardButton("🎵 نسخة صوتية", callback_data=f"audio:{short_id}")
+                            types.InlineKeyboardButton("نسخة صوتية", callback_data=f"audio:{short_id}")
                         )
                         bot.send_message(sent.chat.id, "عايز نسخة صوتية من نفس الفيديو؟", reply_markup=markup)
             sent_any = True
@@ -267,7 +267,6 @@ def handle_callback(call):
         return
     bot.answer_callback_query(call.id, "جاري التحميل...")
     process_download(call.message, url, mode="audio")
-
 
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
